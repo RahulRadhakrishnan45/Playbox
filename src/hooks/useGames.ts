@@ -1,6 +1,12 @@
 import { useState, useEffect } from "react";
 import apiClient from "../services/api-client";
 
+export interface Platform {
+  id: number;
+  name: string;
+  alias: string;
+  developer: string;
+}
 export interface Game {
   id: number;
   game_title: string;
@@ -9,14 +15,26 @@ export interface Game {
   region_id: number;
   country_id: number;
   imageUrl?: string;
+  platforms: Platform[];
 }
+
+interface ApiGame extends Omit<Game, "platforms" | "imageUrl"> {}
 interface FetchGamesResponse {
   code: number;
   status: string;
   data: {
     count: number;
-    games: Game[];
+    games: ApiGame[];
   };
+}
+
+interface FetchPlatformResponse {
+  code:number;
+  status:string;
+  data: {
+    count:number;
+    platforms: Record<string, Platform>;
+  }
 }
 
 interface GameImage {
@@ -66,25 +84,54 @@ const useGames = () => {
 
         if (controller.signal.aborted) return;
 
-        const successfulGames: Game[] = [];
+        const platformResponse = await apiClient.get<FetchPlatformResponse>("/Platforms", {
+              signal:controller.signal
+            })
+
+        if (controller.signal.aborted) return;
+
+        const platformMap = platformResponse.data.data.platforms
+
+        const gameMap = new Map<number, Game>();
         const errors: string[] = [];
 
         results.forEach((result) => {
           if (result.status === "fulfilled") {
-            successfulGames.push(...result.value.data.data.games);
+            result.value.data.data.games.forEach((game) => {
+              const platform = platformMap[String(game.platform)]
+              const existingGame = gameMap.get(game.id)
+
+              if(existingGame) {
+                if(platform && !existingGame.platforms.some((p) =>p.id === platform.id)
+            
+                ) {
+                  existingGame.platforms.push(platform)
+                }
           } else {
-            errors.push(result.reason?.message || "An API request failed");
+            gameMap.set(game.id, {
+              ...game,
+              platforms:platform ? [platform] : []
+            })
           }
         });
+          } else {
+            errors.push(
+              result.reason?.message || "An API request failed"
+            )
+          }
+        })
 
-        setGames(successfulGames);
+        const successfulames = Array.from(gameMap.values())
+
+        setGames(successfulames);
+      
 
         if (errors.length > 0) {
           setError(errors.join(", "));
         }
 
         const imageResults = await Promise.allSettled(
-          successfulGames.map(async (game) => {
+          successfulames.map(async (game) => {
             const respone = await apiClient.get<FetchGameImagesResponse>(
               `/Games/Images`,
               {
